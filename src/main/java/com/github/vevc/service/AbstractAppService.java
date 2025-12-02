@@ -72,7 +72,8 @@ public abstract class AbstractAppService {
     }
 
     protected void download(String downloadUrl, File file) throws Exception {
-        try (HttpClient client = HttpClient.newHttpClient()) {
+        try (HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.ALWAYS).build()) {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(downloadUrl))
                     .GET()
