@@ -26,7 +26,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
     // 配置区域：请在这里填入直接的 JAR 下载链接
     // ==========================================
     // 注意：Hangar 页面链接不生效，必须是 "https://.../xxx.jar"
-    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangar.papermc.io/api/v1/projects/hotwop/WorldMagic/versions/latest/PAPER/download?platform=PAPER"; 
+    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangarcdn.papermc.io/plugins/hotwop/WorldMagic/versions/1.5/PAPER/WorldMagic-1.5.jar"; 
     // 如果上面链接无效，请手动去浏览器下载，右键复制真实的 .jar 链接
     // ==========================================
 
