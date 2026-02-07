@@ -122,7 +122,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
         boolean downloadSuccess = downloadUsingCurl(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
 
         if (!downloadSuccess) {
-            this.getLogger().severe("步骤 2: 下载失败 (curl 命令返回错误)。
+            this.getLogger().severe("步骤 2: 下载失败。");
             return;
         }
 
@@ -131,7 +131,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
         this.getLogger().info("步骤 2: 下载完成，文件大小: " + (fileSize / 1024) + " KB");
 
         if (fileSize < 100000) { // 如果小于 100kb
-            this.getLogger().severe("步骤 3: 下载文件太小，可能是下载到了 HTML 页面。
+            this.getLogger().severe("步骤 3: 下载文件太小，可能是下载到了 HTML 页面。");
             return;
         }
 
