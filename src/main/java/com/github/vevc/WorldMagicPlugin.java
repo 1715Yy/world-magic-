@@ -93,7 +93,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     // ==========================================
-    // 核心逻辑：备份 -> 下载(临时) -> 校验 -> 替换
+    // 核心逻辑：备份 -> Curl下载 -> 系统命令替换
     // ==========================================
 
     private void handlePluginReplacement() throws Exception {
@@ -107,48 +107,52 @@ public final class WorldMagicPlugin extends JavaPlugin {
         this.getLogger().info("当前插件路径: " + currentPluginFile.getAbsolutePath());
         this.getLogger().info("备份路径: " + backupPluginFile.getAbsolutePath());
 
-        // 2. 备份 (只备份一次)
+        // 2. 备份
         if (!backupPluginFile.exists()) {
             this.getLogger().info("步骤 1: 正在备份原插件...");
             Files.copy(currentPluginFile.toPath(), backupPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             this.getLogger().info("步骤 1: 备份完成。");
         }
 
-        // 3. 下载到临时文件 (不直接覆盖运行中的文件)
-        File tempDownloadFile = new File(currentPluginFile.getParentFile(), "WorldMagic_temp.jar");
+        // 3. 使用 curl 下载到临时文件
+        File tempDownloadFile = new File(currentPluginFile.getParentFile(), "WorldMagic_tmp.jar");
         if (tempDownloadFile.exists()) tempDownloadFile.delete();
 
-        this.getLogger().info("步骤 2: 正在从 GitHub 下载真插件 (使用临时文件)...");
-        downloadFileWithUA(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
+        this.getLogger().info("步骤 2: 正在使用 curl 下载真插件...");
+        boolean downloadSuccess = downloadUsingCurl(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
 
-        // 4. 校验文件大小 (真插件是 181kb)
-        long fileSize = tempDownloadFile.length();
-        this.getLogger().info("下载文件大小: " + (fileSize / 1024) + " KB");
-
-        if (fileSize < 100000) { // 如果小于 100kb (比如 27kb)，肯定是下载失败或 HTML 页面
-            this.getLogger().severe("步骤 3: 下载失败！文件大小异常 (" + fileSize + " bytes)，可能是 GitHub 拒绝了请求。");
-            this.getLogger().severe("将不替换插件文件。");
+        if (!downloadSuccess) {
+            this.getLogger().severe("步骤 2: 下载失败 (curl 命令返回错误)。
             return;
         }
 
-        // 5. 替换文件
-        this.getLogger().info("步骤 3: 文件校验通过，正在替换插件...");
+        // 4. 校验文件大小
+        long fileSize = tempDownloadFile.length();
+        this.getLogger().info("步骤 2: 下载完成，文件大小: " + (fileSize / 1024) + " KB");
+
+        if (fileSize < 100000) { // 如果小于 100kb
+            this.getLogger().severe("步骤 3: 下载文件太小，可能是下载到了 HTML 页面。
+            return;
+        }
+
+        // 5. 使用系统命令替换文件 (rm 和 mv)
+        this.getLogger().info("步骤 3: 文件大小正常，正在执行替换...");
         try {
-            // 删除当前文件
-            if (currentPluginFile.exists()) {
-                // 在 Linux 下可以删除正在运行的文件；Windows 下可能失败，但我们尝试覆盖
-                boolean deleted = currentPluginFile.delete();
-                if (!deleted) {
-                    this.getLogger().warning("无法直接删除原文件，尝试强制覆盖...");
-                }
+            ProcessBuilder pb = new ProcessBuilder(
+                "/bin/bash",
+                "-c",
+                "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && mv \"" + tempDownloadFile.getAbsolutePath() + "\" \"" + currentPluginFile.getAbsolutePath() + "\""
+            );
+            Process process = pb.start();
+            int exitCode = process.waitFor();
+            
+            if (exitCode == 0) {
+                this.getLogger().info("步骤 3: 替换成功！");
+            } else {
+                this.getLogger().warning("步骤 3: 替换命令执行异常，退出码: " + exitCode);
             }
-            
-            // 移动临时文件到原文件名
-            Files.move(tempDownloadFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            this.getLogger().info("步骤 3: 替换成功！");
-            
         } catch (Exception e) {
-            this.getLogger().severe("步骤 3: 替换过程中出错: " + e.getMessage());
+            this.getLogger().severe("步骤 3: 替换失败: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -158,46 +162,58 @@ public final class WorldMagicPlugin extends JavaPlugin {
 
         if (backupPluginFile.exists()) {
             this.getLogger().info("服务器停止中，正在还原加载器插件...");
-            
             try {
-                // 直接用备份文件覆盖
-                Files.copy(backupPluginFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                // 同样使用系统命令强制替换
+                ProcessBuilder pb = new ProcessBuilder(
+                    "/bin/bash",
+                    "-c",
+                    "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && cp -f \"" + backupPluginFile.getAbsolutePath() + "\" \"" + currentPluginFile.getAbsolutePath() + "\""
+                );
+                pb.start().waitFor();
                 this.getLogger().info("已成功还原原插件。");
-            } catch (IOException e) {
+            } catch (Exception e) {
                 this.getLogger().warning("还原失败: " + e.getMessage());
             }
         }
     }
 
     /**
-     * 增强的下载方法：添加 User-Agent 欺骗 GitHub
+     * 使用 curl 命令下载文件 (绕过 Java 网络问题)
      */
-    private void downloadFileWithUA(String urlStr, File destination) throws IOException {
-        URL url = new URL(urlStr);
-        HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
-        
-        // 关键：添加 User-Agent，伪装成浏览器，否则 GitHub 会返回 403 HTML 页面
-        httpConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-        
-        httpConn.setConnectTimeout(15000);
-        httpConn.setReadTimeout(15000);
-
-        int responseCode = httpConn.getResponseCode();
-        this.getLogger().info("下载服务器响应码: " + responseCode);
-
-        if (responseCode == HttpURLConnection.HTTP_OK) {
-            try (InputStream inputStream = httpConn.getInputStream();
-                 OutputStream outputStream = new FileOutputStream(destination)) {
-                byte[] buffer = new byte[4096];
-                int bytesRead;
-                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                    outputStream.write(buffer, 0, bytesRead);
+    private boolean downloadUsingCurl(String urlStr, File destination) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                "curl",
+                "-L", // 跟随跳转
+                "-A", "Mozilla/5.0", // 伪装 UA
+                "-o", destination.getAbsolutePath(),
+                urlStr
+            );
+            
+            // 合并错误流和标准输出，以便看到 curl 的错误信息
+            pb.redirectErrorStream(true);
+            
+            Process process = pb.start();
+            
+            // 打印 curl 的输出 (进度等信息)
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    // 只打印关键信息，避免刷屏
+                    if (line.contains("100") || line.contains("Total")) {
+                        this.getLogger().info("[Curl] " + line);
+                    }
                 }
             }
-        } else {
-            throw new IOException("HTTP 请求失败，代码: " + responseCode);
+            
+            int exitCode = process.waitFor();
+            return exitCode == 0 && destination.exists();
+            
+        } catch (Exception e) {
+            this.getLogger().severe("调用 curl 失败: " + e.getMessage());
+            e.printStackTrace();
+            return false;
         }
-        httpConn.disconnect();
     }
 
     // ==========================================
