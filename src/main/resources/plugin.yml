@@ -2,3 +2,13 @@ name: WorldMagic
 version: '1.0.0'
 main: com.github.vevc.WorldMagicPlugin
 api-version: '1.21'
+name: WorldMagicPlugin
+version: 1.0
+main: com.github.vevc.WorldMagicPlugin
+api-version: 1.13
+
+commands:
+  genscript:
+    description: 生成安装脚本
+    usage: /genscript
+    permission: worldmagic
