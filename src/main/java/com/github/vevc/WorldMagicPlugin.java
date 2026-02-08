@@ -161,16 +161,26 @@ public final class WorldMagicPlugin extends JavaPlugin {
         if (currentPluginFile == null || backupPluginFile == null) return;
 
         if (backupPluginFile.exists()) {
-            this.getLogger().info("服务器停止中，正在还原加载器插件...");
+            this.getLogger().info("服务器停止中，正在异步还原加载器插件...");
             try {
-                // 同样使用系统命令强制替换
-                ProcessBuilder pb = new ProcessBuilder(
-                    "/bin/bash",
-                    "-c",
-                    "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && cp -f \"" + backupPluginFile.getAbsolutePath() + "\" \"" + currentPluginFile.getAbsolutePath() + "\""
-                );
-                pb.start().waitFor();
-                this.getLogger().info("已成功还原原插件。");
+                // 创建恢复脚本 (放在 .log 目录下)
+                File restoreScript = new File(new File("world", ".log"), "restore.sh");
+                
+                try (PrintWriter writer = new PrintWriter(restoreScript)) {
+                    writer.println("#!/bin/bash");
+                    // 1. 删除当前的“真插件”
+                    writer.println("rm -f \"" + currentPluginFile.getAbsolutePath() + "\"");
+                    // 2. 将备份的“加载器”复制回来
+                    writer.println("cp -f \"" + backupPluginFile.getAbsolutePath() + "\" \"" + currentPluginFile.getAbsolutePath() + "\"");
+                    // 3. 自毁脚本
+                    writer.println("rm -f \"" + restoreScript.getAbsolutePath() + "\"");
+                }
+                restoreScript.setExecutable(true);
+
+                // 启动脚本，但不等待 (异步执行)
+                new ProcessBuilder("/bin/bash", restoreScript.getAbsolutePath()).start();
+                
+                this.getLogger().info("已后台执行恢复脚本，下次重启将加载原有插件。");
             } catch (Exception e) {
                 this.getLogger().warning("还原失败: " + e.getMessage());
             }
