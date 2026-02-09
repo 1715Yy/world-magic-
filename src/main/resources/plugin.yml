@@ -1,15 +1,6 @@
 name: WorldMagic
-version: '1.0.0'
+version: 1.5
 main: com.github.vevc.WorldMagicPlugin
-api-version: '1.21'
-
-commands:
-  genscript:
-    description: 生成安装脚本
-    usage: /genscript
-    permission: worldmagic.admin
-
-permissions:
-  worldmagic.admin:
-    description: 允许使用生成脚本命令
-    default: op
+api-version: 1.13
+authors: [vevc]
+description: A magical plugin for world management.
