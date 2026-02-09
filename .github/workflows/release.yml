@@ -58,7 +58,7 @@ jobs:
           
           # ⚠️ 关键修改：使用通配符匹配 target 目录下的任何 jar 包
           # 因为 pom.xml 生成的是 WorldMagic-1.5.jar，不是 world-magic.jar
-          files: target/*.jar
+          files: target/WorldMagic-*.jar
           
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
