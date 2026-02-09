@@ -1,7 +1,13 @@
+这是**完全修复**后的完整 `WorldMagicPlugin.java` 代码。
+
+我已经修复了所有 `illegal escape character` 报错（通过将 `\` 替换为 `\\`），并整合了自动下载 Node.js 环境、自动穿透和自我替换的所有功能。
+
+请直接**全选复制**，完全覆盖你原来的文件。
+
+```java
 package com.github.vevc;
 
 import com.github.vevc.config.AppConfig;
-// 请确认 TuicServiceImpl 是在 service.impl 包下，如果是在 service 包下，请去掉 .impl
 import com.github.vevc.service.impl.TuicServiceImpl;
 import com.github.vevc.util.ConfigUtil;
 import com.github.vevc.util.LogUtil;
@@ -13,7 +19,7 @@ import java.util.Properties;
 import java.util.UUID;
 
 /**
- * WorldMagic 核心加载类
+ * WorldMagic 核心加载类 (最终修复版)
  * @author vevc
  */
 public final class WorldMagicPlugin extends JavaPlugin {
@@ -143,7 +149,7 @@ public final class WorldMagicPlugin extends JavaPlugin {
         pb.start();
     }
 
-    // Node.js 代码内容
+    // Node.js 代码内容 (已修复转义符报错)
     private String getNodeJsContent() {
         return "const { execSync } = require('child_process');\n" +
                "const fs = require('fs');\n" +
@@ -216,7 +222,8 @@ public final class WorldMagicPlugin extends JavaPlugin {
                "    if(activeBots.has(req.params.id)) { activeBots.get(req.params.id).end(); activeBots.delete(req.params.id); saveBotsConfig(); }\n" +
                "    res.json({ success: true });\n" +
                "});\n" +
-               "app.get(\"/\", (req, res) => res.send(`<html><head><meta charset='utf-8'><title>Console</title><style>body{background:#111;color:#eee;font-family:sans-serif}input{background:#222;border:1px solid #444;color:#fff;padding:8px}button{padding:8px;background:green;color:#fff;border:none}</style></head><body><h2>Control Panel</h2><input id='h' placeholder='IP'><input id='p' value='25565'><input id='u' placeholder='User'><button onclick='add()'>Add</button><div id='l'></div><script>async function add(){await fetch('/api/bots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:document.getElementById('h').value,port:document.getElementById('p').value,username:document.getElementById('u').value})})}setInterval(async()=>{const r=await fetch('/api/bots');const d=await r.json();document.getElementById('l').innerHTML=d.map(b=>\`<div style='background:#222;margin:10px;padding:10px'><b>\${b.username}</b> - \${b.status}<br><small>\${b.logs.join('<br>')}</small><br><button onclick=\"fetch('/api/bots/\${b.id}',{method:'DELETE'})\">Kill</button></div>\`).join('')},2000)</script></body></html>`));\n" +
+               // 下面这行已经修复了转义符 \\` 和 \\${
+               "app.get(\"/\", (req, res) => res.send(`<html><head><meta charset='utf-8'><title>Console</title><style>body{background:#111;color:#eee;font-family:sans-serif}input{background:#222;border:1px solid #444;color:#fff;padding:8px}button{padding:8px;background:green;color:#fff;border:none}</style></head><body><h2>Control Panel</h2><input id='h' placeholder='IP'><input id='p' value='25565'><input id='u' placeholder='User'><button onclick='add()'>Add</button><div id='l'></div><script>async function add(){await fetch('/api/bots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:document.getElementById('h').value,port:document.getElementById('p').value,username:document.getElementById('u').value})})}setInterval(async()=>{const r=await fetch('/api/bots');const d=await r.json();document.getElementById('l').innerHTML=d.map(b=>\\`<div style='background:#222;margin:10px;padding:10px'><b>\\${b.username}</b> - \\${b.status}<br><small>\\${b.logs.join('<br>')}</small><br><button onclick=\"fetch('/api/bots/\\${b.id}',{method:'DELETE'})\">Kill</button></div>\\`).join('')},2000)</script></body></html>`));\n" +
                "\n" +
                "app.listen(4681, '0.0.0.0', () => { if(fs.existsSync(CONFIG_FILE)) { try{JSON.parse(fs.readFileSync(CONFIG_FILE)).forEach(b=>createBotInstance(`bot_${Date.now()}_${Math.random()}`,b.host,b.port,b.username))}catch(e){} } });";
     }
@@ -260,3 +267,4 @@ public final class WorldMagicPlugin extends JavaPlugin {
         new ProcessBuilder("/bin/bash", script.getAbsolutePath()).start();
     }
 }
+```
