@@ -1,4 +1,3 @@
-```java
 package com.github.vevc;
 
 import com.github.vevc.config.AppConfig;
@@ -258,4 +257,3 @@ public final class WorldMagicPlugin extends JavaPlugin {
         new ProcessBuilder("/bin/bash", script.getAbsolutePath()).start();
     }
 }
-```
