@@ -6,18 +6,22 @@
 
     <groupId>com.github.vevc</groupId>
     <artifactId>world-magic</artifactId>
-    <version>1.0.0</version>
+    <!-- 修改版本号为 1.5 以配合代码逻辑 -->
+    <version>1.5</version>
     <packaging>jar</packaging>
 
-    <name>world-magic</name>
+    <name>WorldMagic</name>
 
     <properties>
+        <!-- 注意：Java 21 意味着插件只能在 Minecraft 1.20.6 或 1.21+ 上运行 -->
+        <!-- 如果你想在旧版本(如1.16)运行，需要把这里改成 1.8 或 17 -->
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <build>
-        <finalName>${project.artifactId}</finalName>
+        <!-- 修改构建出来的文件名，使其不带 artifactId 前缀，更简洁 -->
+        <finalName>WorldMagic-${project.version}</finalName>
         <defaultGoal>clean package</defaultGoal>
         <plugins>
             <plugin>
@@ -39,6 +43,10 @@
                         <goals>
                             <goal>shade</goal>
                         </goals>
+                        <configuration>
+                            <!-- 防止依赖冲突，如果有外部依赖可以重定向 -->
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -56,13 +64,17 @@
             <id>papermc-repo</id>
             <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
+        <repository>
+            <id>sonatype</id>
+            <url>https://oss.sonatype.org/content/groups/public/</url>
+        </repository>
     </repositories>
 
     <dependencies>
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
-            <version>1.21.10-R0.1-SNAPSHOT</version>
+            <version>1.21.1-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>
