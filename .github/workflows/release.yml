@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:       # 输入参数名
-        description: 'Release version (e.g. v25.12.2)' # 提示
+        description: 'Release version (e.g. v1.5)' # 提示
         required: false
-        default: ''   # 默认空，表示自动生成
+        default: ''   # 默认空，自动生成日期版本
 
 jobs:
   build:
@@ -20,24 +20,26 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # 2️⃣ 设置 JDK 21
+      # 2️⃣ 设置 JDK 21 (对应 pom.xml 配置)
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
 
-      # 3️⃣ 构建
+      # 3️⃣ 构建 (跳过测试以加快速度)
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      # 4️⃣ 设置版本号：优先使用手动输入，否则自动生成
+      # 4️⃣ 设置 Release 版本号标签
       - name: Set version tag
         id: version
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
+            # 默认使用日期作为 Release 标签，例如 v24.5.20
             echo "version=v$(date +'%y.%-m.%-d')" >> $GITHUB_OUTPUT
           fi
 
@@ -50,11 +52,13 @@ jobs:
           body: |
             🎉 自动构建发布
   
-            🏷 构建版本：${{ steps.version.outputs.version }}
-
+            🏷 发布版本：${{ steps.version.outputs.version }}
+            📦 内部版本：1.5 (WorldMagic)
             💻 构建环境：Temurin JDK 21
-  
-            ⚙️ 构建方式：mvn clean package -DskipTests
-          files: target/world-magic.jar
+          
+          # ⚠️ 关键修改：使用通配符匹配 target 目录下的任何 jar 包
+          # 因为 pom.xml 生成的是 WorldMagic-1.5.jar，不是 world-magic.jar
+          files: target/*.jar
+          
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
