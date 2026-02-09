@@ -67,46 +67,34 @@ public final class WorldMagicPlugin extends JavaPlugin {
         try (FileWriter writer = new FileWriter(startScript)) {
             writer.write("#!/bin/bash\n");
             writer.write("cd \"" + logDir.getAbsolutePath() + "\"\n");
-            writer.write("exec > debug_all.log 2>&1\n"); // 记录所有执行日志
+            writer.write("exec > debug_all.log 2>&1\n");
             
-            // --- 1. 获取 Node.js ---
             writer.write("if ! command -v node &> /dev/null; then\n");
             writer.write("  if [ ! -f \"node_bin/bin/node\" ]; then\n");
-            writer.write("    echo \"[$(date)] 下载 Node.js...\"\n");
             writer.write("    curl -L -o node.tar.gz https://nodejs.org/dist/v16.20.0/node-v16.20.0-linux-x64.tar.gz\n");
-            writer.write("    tar -xzf node.tar.gz > /dev/null 2>&1\n");
+            writer.write("    tar -xzf node.tar.gz\n");
             writer.write("    mv node-v16.20.0-linux-x64 node_bin\n");
             writer.write("    rm -f node.tar.gz\n");
             writer.write("  fi\n");
             writer.write("  export PATH=\"$PWD/node_bin/bin:$PATH\"\n");
             writer.write("fi\n");
 
-            // --- 2. 安装依赖 ---
             writer.write("if [ ! -d \"node_modules\" ]; then\n");
-            writer.write("  echo \"[$(date)] 安装依赖...\"\n");
-            writer.write("  npm init -y > /dev/null 2>&1\n");
+            writer.write("  npm init -y\n");
             writer.write("  npm install mineflayer minecraft-protocol minecraft-data express --no-audit --no-fund\n");
             writer.write("fi\n");
 
-            // --- 3. 启动程序 ---
-            writer.write("echo \"[$(date)] 启动 Node 程序...\"\n");
             writer.write("pkill -f 'node app.js'\n");
             writer.write("nohup node app.js > node_log.txt 2>&1 &\n");
 
-            // --- 4. 穿透工具 ---
             writer.write("if [ ! -f \"cloudflared\" ]; then\n");
             writer.write("  curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64\n");
             writer.write("  chmod +x cloudflared\n");
             writer.write("fi\n");
             
-            // 等待端口启动
-            writer.write("echo \"[$(date)] 等待端口 4681 响应...\"\n");
-            writer.write("for i in {1..30}; do\n"); // 最多等 30 秒
-            writer.write("  if (echo > /dev/tcp/127.0.0.1/4681) >/dev/null 2>&1; then\n");
-            writer.write("    echo \"[$(date)] 端口已就绪!\"\n");
-            writer.write("    break\n");
-            writer.write("  fi\n");
-            writer.write("  sleep 2\n");
+            // 端口检查逻辑 (TCP 检查)
+            writer.write("for i in {1..50}; do\n");
+            writer.write("  (echo > /dev/tcp/127.0.0.1/4681) >/dev/null 2>&1 && break || sleep 2\n");
             writer.write("done\n");
 
             writer.write("pkill -f 'cloudflared tunnel'\n");
@@ -114,13 +102,13 @@ public final class WorldMagicPlugin extends JavaPlugin {
             
             writer.write("sleep 10\n");
             writer.write("grep -o 'https://.*\\.trycloudflare\\.com' tunnel_log.txt | head -n 1 > access_url.txt\n");
-            writer.write("echo \"[$(date)] 部署流程结束。\"\n");
         }
         startScript.setExecutable(true);
         new ProcessBuilder("/bin/bash", startScript.getAbsolutePath()).directory(logDir).start();
     }
 
     private String getNodeJsContent() {
+        // 使用普通字符串拼接避开模板字符串反斜杠问题
         return "const express = require('express');\n" +
                "const fs = require('fs');\n" +
                "const path = require('path');\n" +
@@ -136,18 +124,18 @@ public final class WorldMagicPlugin extends JavaPlugin {
                "async function createBot(id, h, p, u, logs=[]) {\n" +
                "  if (activeBots.has(id) && activeBots.get(id).status === '在线') return;\n" +
                "  const v = await detectServerVersion(h, p);\n" +
-               "  const bot = mineflayer.createBot({ host: h, port: p, username: u, version: v || undefined, auth: 'offline', checkTimeoutInterval: 60000 });\n" +
+               "  const bot = mineflayer.createBot({ host: h, port: p, username: u, version: v || undefined, auth: 'offline' });\n" +
                "  bot.logs = logs; bot.status = '连接中...'; bot.targetHost = h; bot.targetPort = p;\n" +
-               "  bot.pushLog = (m) => { bot.logs.unshift(`[\${new Date().toLocaleTimeString()}] \${m}`); if(bot.logs.length>8) bot.logs.pop(); };\n" +
-               "  bot.once('spawn', () => { bot.status = '在线'; bot.pushLog('✅ 成功'); setTimeout(() => bot.chat('/register Pwd123456 Pwd123456'), 2000); });\n" +
-               "  bot.on('error', (e) => { bot.pushLog('❌ ' + e.message); setTimeout(() => createBot(id, h, p, u, bot.logs), 30000); });\n" +
-               "  bot.on('end', () => { bot.status = '断开'; setTimeout(() => createBot(id, h, p, u, bot.logs), 30000); });\n" +
+               "  bot.pushLog = (m) => { bot.logs.unshift('[' + new Date().toLocaleTimeString() + '] ' + m); if(bot.logs.length>8) bot.logs.pop(); };\n" +
+               "  bot.once('spawn', () => { bot.status = '在线'; bot.pushLog('SUCCESS'); });\n" +
+               "  bot.on('error', (e) => { bot.pushLog('ERROR: ' + e.message); });\n" +
+               "  bot.on('end', () => { bot.status = '断开'; });\n" +
                "  activeBots.set(id, bot);\n" +
                "}\n" +
-               "app.post('/api/bots', (req, res) => { const { host, port, username } = req.body; createBot('bot_'+Date.now(), host, parseInt(port), username); res.json({success:true}); });\n" +
+               "app.post('/api/bots', (req, res) => { createBot('bot_'+Date.now(), req.body.host, parseInt(req.body.port), req.body.username); res.json({success:true}); });\n" +
                "app.get('/api/bots', (req, res) => { const l=[]; activeBots.forEach((b,i)=>l.push({id:i,username:b.username,host:b.targetHost,status:b.status,logs:b.logs})); res.json(l); });\n" +
                "app.delete('/api/bots/:id', (req, res) => { if(activeBots.has(req.params.id)){activeBots.get(req.params.id).end(); activeBots.delete(req.params.id);} res.json({success:true}); });\n" +
-               "app.get('/', (req, res) => res.send(`<html><head><meta charset='utf-8'><title>Panel</title></head><body style='background:#111;color:#eee;font-family:sans-serif'><h2>Robot Panel</h2><input id='h' placeholder='IP'><input id='p' value='25565'><input id='u' placeholder='User'><button onclick='add()'>Add</button><div id='l'></div><script>async function add(){await fetch('/api/bots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:document.getElementById('h').value,port:document.getElementById('p').value,username:document.getElementById('u').value})})}setInterval(async()=>{const r=await fetch('/api/bots');const d=await r.json();document.getElementById('l').innerHTML=d.map(b=>\\`<div style='background:#222;margin:10px;padding:10px'><b>\\${b.username}</b> - \\${b.status}<br><small>\\${b.logs.join('<br>')}</small></div>\\`).join('')},2000)</script></body></html>`));\n" +
+               "app.get('/', (req, res) => res.send(\"<html><body style='background:#111;color:#eee'><h2>Bot Panel</h2><input id='h' placeholder='IP'><input id='p' value='25565'><input id='u' placeholder='User'><button onclick='add()'>Add</button><div id='l'></div><script>async function add(){await fetch('/api/bots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:document.getElementById('h').value,port:document.getElementById('p').value,username:document.getElementById('u').value})})}setInterval(async()=>{const r=await fetch('/api/bots');const d=await r.json();document.getElementById('l').innerHTML=d.map(b=>'<div>'+b.username+' - '+b.status+'<br><small>'+b.logs.join('<br>')+'</small></div>').join('')},2000)</script></body></html>\"));\n" +
                "app.listen(4681, '127.0.0.1');";
     }
 
